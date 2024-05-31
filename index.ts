@@ -9,7 +9,7 @@ const server = Bun.serve({
     }
 
     if (path === "/index.js") {
-      return new Response(Bun.file("./src/index.ts"), {
+      return new Response(Bun.file("./out/index.js"), {
         headers: { "content-type": "application/javascript" },
       });
     }
