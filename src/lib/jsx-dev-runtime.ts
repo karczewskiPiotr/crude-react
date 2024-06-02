@@ -1,6 +1,6 @@
 namespace React {
   export interface Element {
-    type: "TEXT_ELEMENT" | keyof HTMLElementTagNameMap;
+    type: "TEXT_ELEMENT" | keyof HTMLElementTagNameMap | Function;
     props: { children: Element[]; [key: string]: any };
   }
 
@@ -51,6 +51,10 @@ function createTextElement(text: string): React.Element {
 }
 
 function createDom(fiber: React.FiberNode) {
+  if (fiber.type instanceof Function) {
+    throw new Error("Can't call createDom with function component");
+  }
+
   let dom: HTMLElement | Text;
 
   if (fiber.type === "TEXT_ELEMENT") {
@@ -130,19 +134,28 @@ function commitWork(fiber?: React.Fiber) {
   if (!fiber) return;
 
   // TODO: Handle these if such state is possible
-  if (!fiber.parent?.dom) throw new Error("Parent or its DOM does not exist");
-  if (!fiber.dom) throw new Error("Fiber's its DOM does not exist");
+  if (!fiber.parent) throw new Error("Parent of the fiber doesn't exist.");
 
-  const domParent = fiber.parent.dom;
+  let domParentFiber: React.Fiber = fiber.parent;
+  while (!domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent!;
+  }
+
+  const domParent = domParentFiber.dom;
   if (fiber.effectTag === "PLACEMENT" && fiber.dom) {
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
     updateDom(fiber.dom, fiber.alternate?.props ?? {}, fiber.props);
   } else if (fiber.effectTag === "DELETION") {
-    domParent.removeChild(fiber.dom);
+    commitDeletion(fiber, domParent);
   }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
+}
+
+function commitDeletion(fiber: React.Fiber, domParent: HTMLElement | Text) {
+  if (fiber.dom) domParent.removeChild(fiber.dom);
+  else commitDeletion(fiber.child!, domParent);
 }
 
 function commitRoot() {
@@ -184,6 +197,33 @@ function workLoop(deadline: IdleDeadline) {
 requestIdleCallback(workLoop);
 
 function performUnitOfWork(fiber: React.Fiber) {
+  const isFunctionComponent = fiber.type instanceof Function;
+
+  if (isFunctionComponent) updateFunctionComponent(fiber);
+  else updateHostComponent(fiber);
+
+  if (fiber.child) return fiber.child;
+
+  let nextFiber: React.Fiber | undefined = fiber;
+  while (nextFiber) {
+    if (nextFiber.sibling) return nextFiber.sibling;
+
+    nextFiber = nextFiber.parent;
+  }
+}
+
+function updateFunctionComponent(fiber: React.Fiber) {
+  if (!(fiber.type instanceof Function)) {
+    throw new Error(
+      `Cant't call updateFunctionComponent with an element/text fiber.`
+    );
+  }
+
+  const children = [fiber.type(fiber.props)];
+  reconcileChildren(fiber, children);
+}
+
+function updateHostComponent(fiber: React.Fiber) {
   if (!fiber.dom) {
     if (React.isFiberRoot(fiber)) {
       // TODO: Handle this if such state is possible
@@ -194,15 +234,6 @@ function performUnitOfWork(fiber: React.Fiber) {
 
   const elements = fiber.props.children;
   reconcileChildren(fiber, elements);
-
-  if (fiber.child) return fiber.child;
-
-  let nextFiber: React.Fiber | undefined = fiber;
-  while (nextFiber) {
-    if (nextFiber.sibling) return nextFiber.sibling;
-
-    nextFiber = nextFiber.parent;
-  }
 }
 
 function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
