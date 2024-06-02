@@ -1,10 +1,11 @@
 // @ts-nocheck - don't check due to lack of types for JSX
-import * as Didact from "./lib/jsx-dev-runtime";
+import * as React from "./lib/jsx-dev-runtime";
 
-function App(props) {
-  return <h1>Hi {props.name}</h1>;
+function Counter() {
+  const [state, setState] = React.useState(1);
+  return <h1 onClick={() => setState((count) => count + 1)}>Count: {state}</h1>;
 }
 
-const element = <App name="foo" />;
+const element = <Counter />;
 const container = document.getElementById("root")!;
-Didact.render(element, container);
+React.render(element, container);

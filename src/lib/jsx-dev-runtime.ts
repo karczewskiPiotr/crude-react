@@ -11,6 +11,7 @@ namespace React {
     child?: Fiber;
     alternate?: Fiber;
     effectTag?: "UPDATE" | "PLACEMENT" | "DELETION";
+    hooks?: any[];
   }
 
   export type FiberRoot = Omit<FiberNode, "type" | "dom"> & {
@@ -117,6 +118,7 @@ function updateDom(
   );
 
   for (const name of oldProperties) {
+    // TODO: Technically nodeValue is never removed from Text
     (dom as HTMLElement).removeAttribute(name);
   }
 
@@ -126,7 +128,8 @@ function updateDom(
   );
 
   for (const name of validProperties) {
-    (dom as HTMLElement).setAttribute(name, nextProps[name]);
+    // TODO: Handle the Text vs HTMLElement better
+    (dom as any)[name] = nextProps[name];
   }
 }
 
@@ -212,6 +215,9 @@ function performUnitOfWork(fiber: React.Fiber) {
   }
 }
 
+let wipFiber: React.Fiber;
+let hookIndex: number;
+
 function updateFunctionComponent(fiber: React.Fiber) {
   if (!(fiber.type instanceof Function)) {
     throw new Error(
@@ -219,8 +225,47 @@ function updateFunctionComponent(fiber: React.Fiber) {
     );
   }
 
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
+
   const children = [fiber.type(fiber.props)];
   reconcileChildren(fiber, children);
+}
+
+function isFnAction<T = any>(action: T | ((s: T) => T)): action is (s: T) => T {
+  return typeof action === "function";
+}
+
+function useState<T = any>(initial: T) {
+  const oldHook = wipFiber.alternate?.hooks?.[hookIndex] as
+    | { state: T; queue: Array<T | ((state: T) => T)> }
+    | undefined;
+  const hook: { state: T; queue: Array<T | ((state: T) => T)> } = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+
+  const actions = oldHook?.queue ?? [];
+  for (const action of actions) {
+    hook.state = isFnAction(action) ? action(hook.state) : action;
+  }
+
+  const setState = (action: T | ((state: T) => T)) => {
+    hook.queue.push(action);
+    wipRoot = {
+      dom: currentRoot?.dom!,
+      props: currentRoot?.props!,
+      alternate: currentRoot,
+    };
+    nextUnitOfWork = wipRoot;
+    deletions = [];
+  };
+
+  wipFiber.hooks?.push(hook);
+  hookIndex++;
+
+  return [hook.state, setState] as const;
 }
 
 function updateHostComponent(fiber: React.Fiber) {
@@ -288,4 +333,4 @@ function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
   }
 }
 
-export { createElement as jsxDEV, render };
+export { createElement as jsxDEV, render, useState };
