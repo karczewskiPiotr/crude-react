@@ -9,6 +9,8 @@ namespace React {
     parent?: Fiber;
     sibling?: Fiber;
     child?: Fiber;
+    alternate?: Fiber;
+    effectTag?: "UPDATE" | "PLACEMENT" | "DELETION";
   }
 
   export type FiberRoot = Omit<FiberNode, "type" | "dom"> & {
@@ -48,10 +50,6 @@ function createTextElement(text: string): React.Element {
   return { type: "TEXT_ELEMENT", props: { nodeValue: text, children: [] } };
 }
 
-function isProperty(key: keyof React.Element["props"]): key is string {
-  return key !== "children";
-}
-
 function createDom(fiber: React.FiberNode) {
   let dom: HTMLElement | Text;
 
@@ -60,12 +58,72 @@ function createDom(fiber: React.FiberNode) {
   } else {
     dom = document.createElement(fiber.type);
 
-    for (const name of Object.keys(fiber.props).filter(isProperty)) {
-      dom.setAttribute(name, fiber.props[name]);
-    }
+    updateDom(dom, {}, fiber.props);
   }
 
   return dom;
+}
+
+function isEvent(key: string) {
+  return key.startsWith("on");
+}
+
+function isProperty(key: string) {
+  return key !== "children" && !isEvent(key);
+}
+
+function isNew(prev: any, next: any) {
+  return (key: string) => prev[key] !== next[key];
+}
+
+function isGone(next: any) {
+  return (key: string) => !(key in next);
+}
+
+function updateDom(
+  dom: React.Fiber["dom"],
+  prevProps: Partial<React.Fiber["props"]>,
+  nextProps: Partial<React.Fiber["props"]>
+) {
+  // Remove old or changed event listeners
+  const invalidListeners = Object.keys(prevProps).filter(
+    (prop) =>
+      isEvent(prop) &&
+      (!(prop in nextProps) || isNew(prevProps, nextProps)(prop))
+  );
+
+  for (const listener of invalidListeners) {
+    const eventType = listener.toLowerCase().substring(2);
+    dom?.removeEventListener(eventType, prevProps[listener]);
+  }
+
+  // Add new event listeners
+  const validListeners = Object.keys(nextProps).filter(
+    (prop) => isEvent(prop) && isNew(prevProps, nextProps)(prop)
+  );
+
+  for (const listener of validListeners) {
+    const eventType = listener.toLowerCase().substring(2);
+    dom?.addEventListener(eventType, nextProps[listener]);
+  }
+
+  // Remove old properties
+  const oldProperties = Object.keys(prevProps).filter(
+    (prop) => isProperty(prop) && isGone(nextProps)(prop)
+  );
+
+  for (const name of oldProperties) {
+    (dom as HTMLElement).removeAttribute(name);
+  }
+
+  // Set new or changed properties
+  const validProperties = Object.keys(nextProps).filter(
+    (prop) => isProperty(prop) && isNew(prevProps, nextProps)(prop)
+  );
+
+  for (const name of validProperties) {
+    (dom as HTMLElement).setAttribute(name, nextProps[name]);
+  }
 }
 
 function commitWork(fiber?: React.Fiber) {
@@ -76,23 +134,38 @@ function commitWork(fiber?: React.Fiber) {
   if (!fiber.dom) throw new Error("Fiber's its DOM does not exist");
 
   const domParent = fiber.parent.dom;
-  domParent.appendChild(fiber.dom);
+  if (fiber.effectTag === "PLACEMENT" && fiber.dom) {
+    domParent.appendChild(fiber.dom);
+  } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
+    updateDom(fiber.dom, fiber.alternate?.props ?? {}, fiber.props);
+  } else if (fiber.effectTag === "DELETION") {
+    domParent.removeChild(fiber.dom);
+  }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
 }
 
 function commitRoot() {
+  deletions.forEach(commitWork);
   commitWork(wipRoot?.child);
+  currentRoot = wipRoot;
   wipRoot = undefined;
 }
 
 function render(element: React.Element, container: HTMLElement) {
-  wipRoot = { dom: container, props: { children: [element] } };
+  wipRoot = {
+    dom: container,
+    props: { children: [element] },
+    alternate: currentRoot,
+  };
+  deletions = [];
   nextUnitOfWork = wipRoot;
 }
 
 let nextUnitOfWork: React.Fiber | undefined = undefined;
+let currentRoot: React.Fiber | undefined = undefined;
 let wipRoot: React.Fiber | undefined = undefined;
+let deletions: React.Fiber[] = [];
 
 function workLoop(deadline: IdleDeadline) {
   let shouldYield = false;
@@ -120,24 +193,7 @@ function performUnitOfWork(fiber: React.Fiber) {
   }
 
   const elements = fiber.props.children;
-  let index = 0;
-  let prevSibling: React.Fiber["sibling"];
-
-  while (index < elements.length) {
-    const element = elements[index];
-
-    const newFiber = {
-      type: element.type,
-      props: element.props,
-      parent: fiber,
-    };
-
-    if (index === 0) fiber.child = newFiber;
-    else prevSibling!.sibling = newFiber;
-
-    prevSibling = newFiber;
-    index++;
-  }
+  reconcileChildren(fiber, elements);
 
   if (fiber.child) return fiber.child;
 
@@ -146,6 +202,58 @@ function performUnitOfWork(fiber: React.Fiber) {
     if (nextFiber.sibling) return nextFiber.sibling;
 
     nextFiber = nextFiber.parent;
+  }
+}
+
+function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
+  let index = 0;
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
+  let prevSibling: React.Fiber["sibling"];
+
+  while (index < elements.length || oldFiber) {
+    const element = elements[index];
+    let newFiber: React.Fiber | undefined = undefined;
+
+    // Compare oldFiber to element
+    const sameType = oldFiber && element && oldFiber.type === element.type;
+
+    // Update the node
+    if (sameType) {
+      newFiber = {
+        type: oldFiber?.type,
+        props: element.props,
+        dom: oldFiber?.dom!,
+        parent: wipFiber,
+        alternate: oldFiber,
+        effectTag: "UPDATE",
+      };
+    }
+
+    // Add the node
+    if (element && !sameType) {
+      newFiber = {
+        type: element.type,
+        props: element.props,
+        dom: undefined,
+        parent: wipFiber,
+        alternate: undefined,
+        effectTag: "PLACEMENT",
+      };
+    }
+
+    // Delete the oldFiber's node
+    if (oldFiber && !sameType) {
+      oldFiber.effectTag = "DELETION";
+      deletions.push(oldFiber);
+    }
+
+    if (oldFiber) oldFiber = oldFiber.sibling;
+
+    if (index === 0) wipFiber.child = newFiber;
+    else if (element) prevSibling!.sibling = newFiber;
+
+    prevSibling = newFiber;
+    index++;
   }
 }
 
