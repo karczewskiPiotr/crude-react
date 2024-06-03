@@ -1,10 +1,16 @@
 namespace React {
+  export type JsxElementType = keyof HTMLElementTagNameMap | Function;
+  export type JsxElementProps = {
+    children: Element[] | string;
+    [key: string]: any;
+  };
+
   export interface Element {
     type: "TEXT_ELEMENT" | keyof HTMLElementTagNameMap | Function;
     props: { children: Element[]; [key: string]: any };
   }
 
-  export interface FiberNode extends React.Element {
+  export interface FiberNode extends Element {
     dom?: HTMLElement | Text;
     parent?: Fiber;
     sibling?: Fiber;
@@ -26,15 +32,35 @@ namespace React {
   }
 }
 
+/**
+ * Creates a React element of the given type.
+ *
+ * This function is what Bun transpiles the JSX to in order to make it valid JavaScript.
+ * The difference between the call signatures of this function and [React's](https://react.dev/reference/react/createElement)
+ * is due to Bun passing `children` as part of the props durign transpilation.
+ *
+ * The following JSX
+ *
+ * ```tsx
+ * export default function Hello() {
+ *  return <h1>Hello world!</h1>
+ * }
+ * ```
+ *
+ * will be transpiled to (_more or less_)
+ *
+ * ```tsx
+ * export default function Hello() {
+ *  return createElement("h1", { children: "Hello world!" });
+ * }
+ * ```
+ */
 function createElement(
-  type: React.Element["type"],
-  props: { children: React.Element[] | string; [key: string]: any }
-): React.Element {
+  type: React.JsxElementType,
+  props: React.JsxElementProps
+) {
   const { children = [], ...delegated } = props;
-  const element = {
-    type,
-    props: { ...delegated, children: [] as React.Element[] },
-  };
+  const element: React.Element = { type, props: { delegated, children: [] } };
 
   if (Array.isArray(children)) {
     element.props.children = children.map((child) =>
