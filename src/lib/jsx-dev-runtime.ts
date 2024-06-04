@@ -20,12 +20,25 @@ namespace React {
   }
 
   export type FiberNode = {
+    /** DOM node associated with the fiber */
     dom?: HTMLElement | Text;
+    /** Pointer to the parent fiber. */
     parent?: Fiber;
+    /** Pointer to the next sibling fiber. */
     sibling?: Fiber;
+    /** Pointer to the first child fiber. */
     child?: Fiber;
+    /** Alternate fiber (the previous fiber representing this node) */
     alternate?: Fiber;
+    /**
+     * A tag, which marks the type of update that needs to be performed on the DOM.\
+     * For purposes of the crude implementation it can indicate:
+     * - update of the properties of existing DOM nodes
+     * - creation of new DOM nodes
+     * - deletion of existing DOM nodes
+     */
     effectTag?: "UPDATE" | "PLACEMENT" | "DELETION";
+    /** Keeps track of hooks to allow for multiple of them in one component. */
     hooks?: any[];
   } & Element;
 
@@ -35,10 +48,10 @@ namespace React {
   };
 
   export type Fiber = FiberRoot | FiberNode;
+}
 
-  export function isFiberRoot(fiber: Fiber): fiber is FiberRoot {
-    return !fiber.type;
-  }
+function isFiberRoot(fiber: React.Fiber): fiber is React.FiberRoot {
+  return !fiber.type;
 }
 
 function assert(expression: unknown, msg?: string): asserts expression {
@@ -130,7 +143,7 @@ function createTextElement(text: string | number): React.TextElement {
   };
 }
 
-// --- Render phase
+// --- DOM manipulation helpers
 
 /** Updates existing DOM nodes with props that changed */
 function updateDom(
@@ -192,6 +205,8 @@ function createDom(fiber: React.FiberNode) {
 
   return dom;
 }
+
+// --- Render phase
 
 function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
   let index = 0;
@@ -256,6 +271,7 @@ function updateFunctionComponent(fiber: React.Fiber) {
   hookIndex = 0;
   wipFiber.hooks = [];
 
+  // TODO: Handle string | number children
   const children = [fiber.type(fiber.props)];
   reconcileChildren(fiber, children);
 }
@@ -263,7 +279,7 @@ function updateFunctionComponent(fiber: React.Fiber) {
 function updateHostComponent(fiber: React.Fiber) {
   if (!fiber.dom) {
     assert(
-      !React.isFiberRoot(fiber),
+      !isFiberRoot(fiber),
       "Attempted to update host component for root fiber"
     );
 
@@ -274,6 +290,20 @@ function updateHostComponent(fiber: React.Fiber) {
   reconcileChildren(fiber, elements);
 }
 
+/**
+ * Performs unit of work on the fiber and finds the next unit of work to return.
+ *
+ * Next unit of work is found by traversing the fiber tree:
+ *  - if fiber has a child it becomes the next unit of work
+ *  - if fiber has no child the sibling becomes the next unit of work
+ *  - if fiber has no sibling we traverse the tree
+ *    up to the parent and try to use its sibling
+ *  - if the parent doesn't have a sibling we keep traversing
+ *    the tree up the parents till we find one with a sibling
+ *    or run out of fibers
+ *
+ * Running out of fibers means we finished the work.
+ */
 function performUnitOfWork(fiber: React.Fiber) {
   const isFunctionComponent = fiber.type instanceof Function;
 
@@ -304,10 +334,12 @@ function commitWork(fiber?: React.Fiber) {
 
   const domParent = domParentFiber.dom;
   if (fiber.effectTag === "PLACEMENT" && fiber.dom) {
+    assert(isElementNode(domParent), "Can't append a node to Text node");
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "UPDATE" && fiber.dom) {
     updateDom(fiber.dom, fiber.alternate?.props ?? {}, fiber.props);
   } else if (fiber.effectTag === "DELETION") {
+    assert(isElementNode(domParent), "Can't remove a node from Text node");
     commitDeletion(fiber, domParent);
   }
 
@@ -315,11 +347,21 @@ function commitWork(fiber?: React.Fiber) {
   commitWork(fiber.sibling);
 }
 
-function commitDeletion(fiber: React.Fiber, domParent: HTMLElement | Text) {
+/**
+ * Removes elements and their children from the DOM
+ *
+ * Function components do not have a DOM node so we need
+ * traverse the cildren till we find their DOM nodes to remove.
+ *
+ * One more case to handle is a component that return `null` as
+ * it will not have a DOM node on any of its children.
+ */
+function commitDeletion(fiber: React.Fiber, domParent: HTMLElement) {
   if (fiber.dom) domParent.removeChild(fiber.dom);
-  else commitDeletion(fiber.child!, domParent);
+  else if (fiber.child) commitDeletion(fiber.child, domParent);
 }
 
+/** Modifies the DOM based on the latest {@link wipRoot} and reset the VDOM state. */
 function commitRoot() {
   deletions.forEach(commitWork);
   commitWork(wipRoot?.child);
@@ -330,10 +372,24 @@ function commitRoot() {
 // --- Mount and kick-off render
 
 let nextUnitOfWork: React.Fiber | undefined = undefined;
+/** The current state of the virtual DOM (last committed fiber tree) */
 let currentRoot: React.Fiber | undefined = undefined;
+/** Work in progress fiber tree that will be commited when render is done */
 let wipRoot: React.Fiber | undefined = undefined;
+/**
+ * Fibers that need to be removed.
+ *
+ * There is a need track them since they are no longer part of the {@link wipRoot}.
+ */
 let deletions: React.Fiber[] = [];
 
+/**
+ * Responsible for _"rendering"_ the element inside of the container.
+ *
+ * The rendering actually happens inside of the {@link workLoop}.
+ * The render function itsef just kicks of the work by telling
+ * the `workLoop` what tree it should work on.
+ */
 function render(element: React.Element, container: HTMLElement) {
   wipRoot = {
     dom: container,
@@ -344,6 +400,17 @@ function render(element: React.Element, container: HTMLElement) {
   nextUnitOfWork = wipRoot;
 }
 
+/**
+ * Responsible for running the render and commit phases.
+ *
+ * Chunk of the render phase (see {@link performUnitOfWork}) is guaranteed to run in each call but
+ * not guaranteed to finish rendering the entire tree.
+ * Commit phase only takes place if the entire tree has been rendered. (see {@link commitRoot})
+ *
+ * Work is performed in small chunks in order to allow the browser
+ * to handle high priority things like user input by interrupting
+ * the rendering, which would otherwise block the main thread.
+ */
 function workLoop(deadline: IdleDeadline) {
   let shouldYield = false;
 
