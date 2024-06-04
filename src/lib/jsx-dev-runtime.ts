@@ -1,7 +1,7 @@
 namespace React {
   export type JsxElementType = keyof HTMLElementTagNameMap | Function;
   export type JsxElementProps = {
-    children: Element[] | string | number;
+    children: Element[] | Element | string | number;
     [key: string]: any;
   };
 
@@ -128,12 +128,14 @@ function createElement(
   const { children = [], ...rest } = props;
   const element: React.Element = { type, props: { ...rest, children: [] } };
 
-  if (Array.isArray(children)) {
+  if (typeof children !== "object") {
+    element.props.children.push(createTextElement(children));
+  } else if (!Array.isArray(children)) {
+    element.props.children.push(children);
+  } else {
     element.props.children = children.map((child) =>
       typeof child === "object" ? child : createTextElement(child)
     );
-  } else {
-    element.props.children = [createTextElement(children)];
   }
 
   return element;
