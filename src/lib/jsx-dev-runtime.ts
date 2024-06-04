@@ -15,7 +15,9 @@ namespace React {
     props: { nodeValue: string; children: Element[]; [key: string]: any };
   }
   export interface FunctionComponent {
-    type: (props: FunctionComponent["props"]) => Element;
+    type: (
+      props: FunctionComponent["props"]
+    ) => Element | string | number | boolean | null;
     props: { children: Element[]; [key: string]: any };
   }
 
@@ -66,6 +68,12 @@ function isTextNode(node: Node): node is Text {
 /** https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType */
 function isElementNode(node: Node): node is HTMLElement {
   return node.nodeType === 1;
+}
+
+function isFunctionComponent(
+  fiber: React.Fiber
+): fiber is React.FunctionComponent {
+  return fiber.type instanceof Function;
 }
 
 /** Check if prop is an event handler */
@@ -261,9 +269,26 @@ function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
 let wipFiber: React.Fiber;
 let hookIndex: number;
 
+/**
+ * Function components can return primitive values
+ * so we need to turn them into valid elements.
+ */
+function evaluateFunctionComponent(fiber: React.FunctionComponent) {
+  const fcReturn = fiber.type(fiber.props);
+  const children: React.Element[] = [];
+
+  if (typeof fcReturn === "string" || typeof fcReturn === "number") {
+    children.push(createTextElement(fcReturn));
+  } else if (fcReturn && typeof fcReturn === "object") {
+    children.push(fcReturn);
+  }
+
+  return children;
+}
+
 function updateFunctionComponent(fiber: React.Fiber) {
   assert(
-    fiber.type instanceof Function,
+    isFunctionComponent(fiber),
     "Attempted to call updateFunctionComponent with element/text fiber"
   );
 
@@ -271,8 +296,7 @@ function updateFunctionComponent(fiber: React.Fiber) {
   hookIndex = 0;
   wipFiber.hooks = [];
 
-  // TODO: Handle string | number children
-  const children = [fiber.type(fiber.props)];
+  const children = evaluateFunctionComponent(fiber);
   reconcileChildren(fiber, children);
 }
 
