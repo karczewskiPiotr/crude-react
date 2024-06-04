@@ -218,50 +218,67 @@ function createDom(fiber: React.FiberNode) {
 
 // --- Render phase
 
+/**
+ * @param wipFiber the fiber to reconcile.
+ * @param elements elements that are children of the parent element, which the fiber represents
+ * @description
+ * Compare WIP fiber's children with the current VDOM state
+ * to determine which commit strategy to use for the fiber.
+ */
 function reconcileChildren(wipFiber: React.Fiber, elements: React.Element[]) {
   let index = 0;
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
-  let prevSibling: React.Fiber["sibling"];
+  // Tracks sibling so we can backwards set the newly tagged fiber
+  let prevSibling: React.Fiber | undefined;
 
+  // Iterates over the children of the oldFiber (tree)
+  //            and the elements (array) to reconcile.
   while (index < elements.length || oldFiber) {
     const element = elements[index];
-    let newFiber: React.Fiber | undefined = undefined;
+    let newFiber: React.Fiber | undefined;
 
     // Compare oldFiber to element
     const sameType = oldFiber && element && oldFiber.type === element.type;
 
-    // Update the node
+    // Tag the fiber for UPDATE if the element is the same
     if (sameType) {
+      assert(oldFiber);
       newFiber = {
-        type: oldFiber?.type,
+        type: oldFiber.type,
         props: element.props,
-        dom: oldFiber?.dom!,
+        dom: oldFiber.dom,
         parent: wipFiber,
         alternate: oldFiber,
         effectTag: "UPDATE",
-      };
+      } as React.Fiber;
     }
 
-    // Add the node
+    // Tag the fiber for PLACEMENT if the elements is new
     if (element && !sameType) {
       newFiber = {
         type: element.type,
         props: element.props,
         parent: wipFiber,
         effectTag: "PLACEMENT",
-      } as React.FiberNode;
+      } as React.Fiber;
     }
 
-    // Delete the oldFiber's node
+    // Tag the fiber for DELETION if the element was removed
     if (oldFiber && !sameType) {
       oldFiber.effectTag = "DELETION";
       deletions.push(oldFiber);
     }
 
+    // Traverse to the next child of the fiber in next iteration
     if (oldFiber) oldFiber = oldFiber.sibling;
 
-    if (index === 0) wipFiber.child = newFiber;
-    else if (element) prevSibling!.sibling = newFiber;
+    // Update the fiber in the work in progrees tree with newly tagged changes
+    if (index === 0) {
+      wipFiber.child = newFiber;
+    } else if (element) {
+      assert(prevSibling);
+      prevSibling.sibling = newFiber;
+    }
 
     prevSibling = newFiber;
     index++;
@@ -288,6 +305,7 @@ function evaluateFunctionComponent(fiber: React.FunctionComponent) {
   return children;
 }
 
+/** Runs function component from fiber and updates the tree based on the result */
 function updateFunctionComponent(fiber: React.Fiber) {
   assert(
     isFunctionComponent(fiber),
@@ -302,6 +320,7 @@ function updateFunctionComponent(fiber: React.Fiber) {
   reconcileChildren(fiber, children);
 }
 
+/** Updates the tree based on the fiber and its children  */
 function updateHostComponent(fiber: React.Fiber) {
   if (!fiber.dom) {
     assert(
@@ -397,11 +416,11 @@ function commitRoot() {
 
 // --- Mount and kick-off render
 
-let nextUnitOfWork: React.Fiber | undefined = undefined;
+let nextUnitOfWork: React.Fiber | undefined;
 /** The current state of the virtual DOM (last committed fiber tree) */
-let currentRoot: React.Fiber | undefined = undefined;
+let currentRoot: React.Fiber | undefined;
 /** Work in progress fiber tree that will be commited when render is done */
-let wipRoot: React.Fiber | undefined = undefined;
+let wipRoot: React.Fiber | undefined;
 /**
  * Fibers that need to be removed.
  *
