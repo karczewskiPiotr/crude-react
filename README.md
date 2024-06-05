@@ -1,6 +1,6 @@
 # Crude React
 
-This project is a crude recreation of React library purely for hobbyst/educational purposes.
+This project is a crude recreation of React library purely for fun/educational purposes.
 
 The scope of this project encapsulates the client side part of React in its pre RSC era.
 
@@ -45,7 +45,7 @@ bun run serve # runs a simple http server with a playground
 
 ---
 
-Big shout out to some great resources:
+Big shout-out to some great resources:
 
 - https://pomb.us/build-your-own-react/
 - https://github.com/acdlite/react-fiber-architecture
