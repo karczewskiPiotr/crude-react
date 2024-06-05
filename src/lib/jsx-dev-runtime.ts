@@ -55,12 +55,12 @@ namespace React {
   };
 }
 
-function isFiberRoot(fiber: React.Fiber): fiber is React.FiberRoot {
-  return !fiber.type;
-}
-
 function assert(expression: unknown, msg?: string): asserts expression {
   if (!expression) throw new Error(msg);
+}
+
+function isFiberRoot(fiber: React.Fiber): fiber is React.FiberRoot {
+  return !fiber.type;
 }
 
 /** https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType */
