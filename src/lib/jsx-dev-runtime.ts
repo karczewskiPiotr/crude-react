@@ -21,6 +21,11 @@ namespace React {
     props: { children: Element[]; [key: string]: any };
   }
 
+  export type Fiber = FiberRoot | FiberNode;
+  export type FiberRoot = Omit<FiberNode, "type" | "dom"> & {
+    type?: FiberNode["type"];
+    dom: Required<FiberNode>["dom"];
+  };
   export type FiberNode = {
     /** DOM node associated with the fiber */
     dom?: HTMLElement | Text;
@@ -44,12 +49,10 @@ namespace React {
     hooks?: any[];
   } & Element;
 
-  export type FiberRoot = Omit<FiberNode, "type" | "dom"> & {
-    type?: FiberNode["type"];
-    dom: Required<FiberNode>["dom"];
+  export type StateHook<T = any> = {
+    state: T;
+    queue: Array<T | ((state: T) => T)>;
   };
-
-  export type Fiber = FiberRoot | FiberNode;
 }
 
 function isFiberRoot(fiber: React.Fiber): fiber is React.FiberRoot {
@@ -481,10 +484,9 @@ function isFnAction<T = any>(action: T | ((s: T) => T)): action is (s: T) => T {
 }
 
 function useState<T = any>(initial: T) {
-  const oldHook = wipFiber.alternate?.hooks?.[hookIndex] as
-    | { state: T; queue: Array<T | ((state: T) => T)> }
-    | undefined;
-  const hook: { state: T; queue: Array<T | ((state: T) => T)> } = {
+  const oldHook: React.StateHook<T> | undefined =
+    wipFiber.alternate?.hooks?.[hookIndex];
+  const hook: React.StateHook<T> = {
     state: oldHook ? oldHook.state : initial,
     queue: [],
   };
@@ -496,9 +498,11 @@ function useState<T = any>(initial: T) {
 
   const setState = (action: T | ((state: T) => T)) => {
     hook.queue.push(action);
+    // Initiate a rerender
+    assert(currentRoot && currentRoot.dom);
     wipRoot = {
-      dom: currentRoot?.dom!,
-      props: currentRoot?.props!,
+      dom: currentRoot.dom,
+      props: currentRoot.props,
       alternate: currentRoot,
     };
     nextUnitOfWork = wipRoot;
