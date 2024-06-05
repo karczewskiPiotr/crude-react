@@ -1,5 +1,5 @@
 {
-  "name": "byo-react",
+  "name": "crude-react",
   "module": "index.ts",
   "devDependencies": {
     "@types/bun": "latest"
@@ -8,7 +8,7 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "dev": "bun build ./src/index.tsx --outdir ./out --watch",
+    "build": "bun build ./src/index.tsx --outdir ./out --watch",
     "serve": "bun run index.ts"
   },
   "type": "module"
